@@ -443,7 +443,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
 
     async fn dequeue(
         &self,
-        request: DequeueRequest<J::Kind>,
+        request: DequeueRequest<J::Kind, J::EntityId>,
     ) -> anyhow::Result<Option<JobLease<J>>> {
         let mut tx = self.pool.begin().await?;
 
