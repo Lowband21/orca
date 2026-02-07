@@ -145,4 +145,5 @@ pub use events::*;
 pub use job::*;
 pub use lease::*;
 pub use queue::*;
+pub use runtime::*;
 pub use scheduler::*;

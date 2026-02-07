@@ -534,7 +534,7 @@ where
                                 Ok(updated) => {
                                     local_expires_at = updated.expires_at;
                                     let correlation_id = renew_correlations
-                                        .fetch_or_generate(updated.lease_id.0)
+                                        .fetch_or_generate(updated.job_id.0)
                                         .await;
                                     let renew_event = JobEvent {
                                         meta: EventMeta::new(
@@ -542,14 +542,12 @@ where
                                             Some(correlation_id),
                                             format!(
                                                 "renew-{}",
-                                                updated.lease_id.0
+                                                updated.job_id.0
                                             ),
                                         ),
                                         payload:
                                             JobEventPayload::LeaseRenewed {
-                                                job_id: JobId(
-                                                    updated.lease_id.0,
-                                                ),
+                                                job_id: updated.job_id,
                                                 lease_id: updated.lease_id,
                                                 renewals: updated.renewals,
                                             },
