@@ -57,6 +57,7 @@ mockall.workspace = true
 orca-testkit = { path = "../orca-testkit" }
 sqlx = { workspace = true }
 serde_json = { workspace = true }
+criterion = { version = "0.5", features = ["async_tokio"] }
 
 # Orca enforces strict quality standards — all common warnings are denied.
 # NOTE: Cannot use workspace = true with local overrides, so lints are fully
@@ -82,3 +83,15 @@ all = "deny"
 pedantic = "warn"
 nursery = "warn"
 cargo = "deny"
+
+[[bench]]
+name = "queue_ops"
+harness = false
+
+[[bench]]
+name = "serialization"
+harness = false
+
+[[bench]]
+name = "runtime_throughput"
+harness = false
