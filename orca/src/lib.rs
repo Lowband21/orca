@@ -138,6 +138,19 @@ pub mod persistence;
 /// - Builders for constructing runtimes
 pub mod runtime;
 
+#[cfg(feature = "metrics")]
+/// Prometheus metrics instrumentation.
+///
+/// The `metrics` module provides Prometheus metrics for monitoring job
+/// orchestration when the `metrics` feature is enabled.
+pub mod metrics;
+
+/// Tracing and telemetry instrumentation.
+///
+/// The `telemetry` module provides helper functions for creating tracing spans
+/// and recording metrics during job lifecycle events.
+pub mod telemetry;
+
 pub use budget::*;
 pub use config::*;
 pub use correlation::*;
@@ -147,3 +160,12 @@ pub use lease::*;
 pub use queue::*;
 pub use runtime::*;
 pub use scheduler::*;
+
+// Re-export telemetry types for convenience
+#[doc(inline)]
+pub use telemetry::{
+    budget_span, instrument_dispatch, job_complete_span, job_dequeue_span,
+    job_dispatch_span, job_enqueue_span, job_renew_span, observe_job_duration,
+    record_job_completed, record_job_end, record_job_enqueued, record_job_start,
+    record_lease_expired, set_budget_utilization, set_queue_depth, JobTimingHandle,
+};

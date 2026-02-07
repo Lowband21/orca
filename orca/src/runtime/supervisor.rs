@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use async_trait::async_trait;
 use chrono::Duration;
 use tokio::sync::{Mutex, Notify};
+use tracing::Instrument;
 
 use crate::budget::{Budget, EntityId};
 use crate::correlation::CorrelationCache;
@@ -17,6 +18,7 @@ use crate::scheduler::{
     PriorityWeights, SchedulerConfig, SchedulingReservation,
     WeightedFairScheduler,
 };
+use crate::telemetry;
 
 /// Maps job kinds to their workload kinds for budget management.
 ///
@@ -440,6 +442,15 @@ where
                     let lease_id = lease.lease_id;
                     let entity_id = reservation.entity_id;
                     let current_expires_at = lease.expires_at;
+                    let entity_id_str = entity_id.to_string();
+                    let job_kind_str = job_kind.to_string();
+
+                    let dequeue_span = telemetry::job_dequeue_span(
+                        &worker_id,
+                        &entity_id_str,
+                        &job_priority.to_string(),
+                    );
+                    let _dequeue_enter = dequeue_span.enter();
 
                     let correlation_id =
                         correlations.fetch_or_generate(job_id).await;
@@ -458,6 +469,8 @@ where
                         },
                     };
                     let _ = events.publish(dequeue_event).await;
+
+                    drop(_dequeue_enter);
 
                     let token = match budget.acquire(workload, entity_id).await
                     {
@@ -563,7 +576,18 @@ where
                         }
                     });
 
-                    let dispatch_status = dispatcher.dispatch(&lease).await;
+                    // Record job start for duration tracking
+                    let timing_handle = telemetry::record_job_start(&job_id.to_string());
+
+                    // Create dispatch span and instrument the dispatch
+                    let dispatch_span = telemetry::job_dispatch_span(
+                        &job_id.to_string(),
+                        &job_kind_str,
+                    );
+                    let dispatch_future = dispatcher.dispatch(&lease);
+                    let dispatch_status = dispatch_future
+                        .instrument(dispatch_span)
+                        .await;
 
                     let _ = cancel_tx.try_send(());
                     let _ = renew_handle.await;
@@ -593,6 +617,19 @@ where
                                 );
                             }
                             scheduler.record_completed(entity_id).await;
+
+                            // Record telemetry for successful completion
+                            telemetry::record_job_completed(
+                                &entity_id_str,
+                                &job_kind_str,
+                                "success",
+                            );
+                            telemetry::record_job_end(
+                                timing_handle,
+                                &entity_id_str,
+                                &job_kind_str,
+                                "success",
+                            );
                         }
                         DispatchStatus::RetryableFailure { error } => {
                             if let Err(err) =
@@ -623,6 +660,19 @@ where
                             scheduler
                                 .record_enqueued(entity_id, job_priority)
                                 .await;
+
+                            // Record telemetry for retryable failure
+                            telemetry::record_job_completed(
+                                &entity_id_str,
+                                &job_kind_str,
+                                "retryable",
+                            );
+                            telemetry::record_job_end(
+                                timing_handle,
+                                &entity_id_str,
+                                &job_kind_str,
+                                "retryable",
+                            );
                         }
                         DispatchStatus::PermanentFailure { error } => {
                             if let Err(err) =
@@ -650,6 +700,19 @@ where
                                 );
                             }
                             scheduler.record_completed(entity_id).await;
+
+                            // Record telemetry for dead letter
+                            telemetry::record_job_completed(
+                                &entity_id_str,
+                                &job_kind_str,
+                                "dead_lettered",
+                            );
+                            telemetry::record_job_end(
+                                timing_handle,
+                                &entity_id_str,
+                                &job_kind_str,
+                                "dead_lettered",
+                            );
                         }
                     }
 

@@ -9,15 +9,7 @@ use uuid::Uuid;
 /// Entity IDs must be unique, copyable, serializable, and convertible to UUIDs.
 /// They represent the primary identifier for jobs and their associated entities.
 pub trait EntityId:
-    Copy
-    + Eq
-    + Hash
-    + Serialize
-    + DeserializeOwned
-    + Display
-    + Send
-    + Sync
-    + 'static
+    Copy + Eq + Hash + Serialize + DeserializeOwned + Display + Send + Sync + 'static
 {
     /// Convert the entity ID to a UUID.
     fn as_uuid(&self) -> Uuid;
@@ -28,16 +20,7 @@ pub trait EntityId:
 /// Job kinds categorize different types of work that can be enqueued
 /// and processed. Each variant should have a unique string representation.
 pub trait JobKind:
-    Copy
-    + Eq
-    + Hash
-    + Display
-    + std::fmt::Debug
-    + Serialize
-    + DeserializeOwned
-    + Send
-    + Sync
-    + 'static
+    Copy + Eq + Hash + Display + std::fmt::Debug + Serialize + DeserializeOwned + Send + Sync + 'static
 {
     /// Get the string representation of this job kind.
     fn as_str(&self) -> &'static str;
@@ -47,19 +30,14 @@ pub trait JobKind:
 ///
 /// Workload kinds allow grouping job types for concurrency limiting
 /// and resource allocation purposes.
-pub trait WorkloadKind:
-    Copy + Eq + Hash + Send + Sync + std::fmt::Debug + 'static
-{
-}
+pub trait WorkloadKind: Copy + Eq + Hash + Send + Sync + std::fmt::Debug + 'static {}
 
 /// Core trait for job types that can be enqueued and executed.
 ///
 /// Jobs are the fundamental unit of work in the orchestration system.
 /// Implementors define their own job types with specific payloads,
 /// priorities, and entity associations.
-pub trait Job:
-    Clone + Serialize + DeserializeOwned + Send + Sync + 'static
-{
+pub trait Job: Clone + Serialize + DeserializeOwned + Send + Sync + 'static {
     /// Type of entity identifier associated with this job.
     type EntityId: EntityId;
     /// Job kind type for categorizing this job.
@@ -94,6 +72,17 @@ pub enum JobPriority {
     P2 = 2,
     /// Lowest priority (3).
     P3 = 3,
+}
+
+impl Display for JobPriority {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            JobPriority::P0 => write!(f, "P0"),
+            JobPriority::P1 => write!(f, "P1"),
+            JobPriority::P2 => write!(f, "P2"),
+            JobPriority::P3 => write!(f, "P3"),
+        }
+    }
 }
 
 /// Lifecycle states of a job in the queue.
