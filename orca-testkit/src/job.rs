@@ -1,9 +1,10 @@
 use orca::*;
 use serde::{Deserialize, Serialize};
 use std::fmt::Display;
+use std::hash::Hasher;
 use uuid::Uuid;
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum TestJob {
     Simple { name: String },
     Slow { duration_ms: u64, name: String },
@@ -19,6 +20,7 @@ pub struct TestDomainEvent {
 impl Job for TestJob {
     type EntityId = TestEntityId;
     type Kind = TestJobKind;
+    type WorkloadKind = TestWorkloadKind;
     type DomainEvent = TestDomainEvent;
 
     fn entity_id(&self) -> Self::EntityId {

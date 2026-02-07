@@ -1,9 +1,10 @@
-use crate::{TestEntityId, TestJob};
+use crate::{TestEntityId, TestJob, TestJobKind};
 use async_trait::async_trait;
 use chrono::Utc;
 use orca::*;
 use parking_lot::Mutex;
 use std::collections::{HashMap, VecDeque};
+use std::hash::Hash;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -53,7 +54,7 @@ impl Default for InMemoryQueueService {
 }
 
 #[async_trait]
-impl QueueService for InMemoryQueueService {
+impl QueueService<TestJob> for InMemoryQueueService {
     async fn enqueue(
         &self,
         entity_id: TestEntityId,
@@ -90,6 +91,7 @@ impl QueueService for InMemoryQueueService {
             id: job_id,
             priority,
             dedupe_key,
+            accepted: true,
         })
     }
 
@@ -106,7 +108,7 @@ impl QueueService for InMemoryQueueService {
 
     async fn dequeue(
         &self,
-        request: DequeueRequest<TestJobKind>,
+        request: DequeueRequest<TestJobKind, TestEntityId>,
     ) -> anyhow::Result<Option<JobLease<TestJob>>> {
         let mut queues = self.queues.lock();
 
@@ -118,7 +120,7 @@ impl QueueService for InMemoryQueueService {
                 let now = Utc::now();
                 let lease_id = LeaseId::new();
 
-                let mut job_entry = jobs.get_mut(&job_id).unwrap();
+                let job_entry = jobs.get_mut(&job_id).unwrap();
                 job_entry.state = JobState::Leased;
                 job_entry.lease_owner = Some(request.worker_id.clone());
                 job_entry.lease_expires_at = Some(now + request.lease_ttl);
@@ -127,9 +129,10 @@ impl QueueService for InMemoryQueueService {
                 let job = job_entry.job.clone();
 
                 return Ok(Some(JobLease {
+                    job_id,
                     lease_id,
                     job,
-                    lease_owner: request.worker_id,
+                    worker_id: request.worker_id,
                     expires_at: now + request.lease_ttl,
                     renewals: 0,
                 }));
@@ -225,24 +228,26 @@ impl QueueService for InMemoryQueueService {
         let mut jobs = self.jobs.lock();
 
         for job in jobs.values_mut() {
+            let lease_str = format!("{}", renewal.lease_id);
             if job
                 .lease_owner
                 .as_ref()
-                .map(|owner| {
-                    let lease_str = format!("{}", renewal.lease_id);
-                    owner == &lease_str || owner.starts_with(&lease_str)
-                })
+                .map(|owner| owner == &lease_str || owner.starts_with(&lease_str))
                 .unwrap_or(false)
-                && owner == renewal.worker_id
+                && job.lease_owner.as_ref() == Some(&renewal.worker_id)
             {
                 job.lease_renewals += 1;
-                JobLease {
-                    lease_id: renewal.extend_by,
-                    job: Default::default(),
-                    lease_manager: Default::default(),
-                    expires_now: Default::default(),
-                    renewals: Default::default(),
-                }
+                let new_expires = Utc::now() + renewal.extend_by;
+                job.lease_expires_at = Some(new_expires);
+
+                return Ok(JobLease {
+                    job_id: job.job_id,
+                    lease_id: renewal.lease_id,
+                    job: job.job.clone(),
+                    worker_id: renewal.worker_id.clone(),
+                    expires_at: new_expires,
+                    renewals: job.lease_renewals,
+                });
             }
         }
 
