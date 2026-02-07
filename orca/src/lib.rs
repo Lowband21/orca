@@ -25,26 +25,71 @@
 //!
 //! # Feature Flags
 //!
-//! - `postgres` - PostgreSQL persistence support via sqlx
+//! - `postgres` - PostgreSQL persistence support via sqlx (requires database setup)
 //! - `metrics` - Prometheus metrics support
 //!
-//! # Example
+//! # Quick Start
+//!
+//! The simplest way to get started is using the in-memory queue for testing:
 //!
 //! ```ignore
 //! use orca::*;
-//! use serde::{Serialize, Deserialize};
+//! use orca_testkit::InMemoryQueueService;
+//! use std::sync::Arc;
 //!
-//! #[derive(Clone, Serialize, Deserialize)]
-//! enum MyJob {
-//!     ProcessFile { path: String },
-//! }
-//!
-//! impl Job for MyJob {
-//!     type EntityId = JobId;
-//!     type Kind = MyJobKind;
-//!     // ... implement required methods
+//! #[tokio::main]
+//! async fn main() -> anyhow::Result<()> {
+//!     // Create queue and enqueue a job
+//!     let queue = Arc::new(InMemoryQueueService::new());
+//!     
+//!     // Define your job type (see examples/ directory for full implementations)
+//!     // let job = MyJob::ProcessFile { path: "/tmp/file.txt".to_string() };
+//!     // let handle = queue.enqueue(job.entity_id(), job, JobPriority::P1).await?;
+//!     
+//!     Ok(())
 //! }
 //! ```
+//!
+//! # Examples
+//!
+//! See the `examples/` directory for complete, runnable examples:
+//!
+//! - `simple_queue.rs` - Basic enqueue/dequeue operations
+//! - `runtime_basic.rs` - Manual worker pools with budget management
+//! - `postgres_runtime.rs` - Full production runtime with PostgreSQL
+//!
+//! Run examples with:
+//! ```bash
+//! # Simple queue (no external dependencies)
+//! cargo run --example simple_queue
+//!
+//! # With PostgreSQL (requires database setup)
+//! cargo run --example postgres_runtime --features postgres
+//! ```
+//!
+//! # Architecture
+//!
+//! Orca follows a **hybrid trait/enum design** for jobs:
+//!
+//! 1. Consumers define their own job enums with domain-specific variants
+//! 2. They implement the [`Job`] trait on their enum
+//! 3. This allows compile-time dispatch while maintaining JSONB round-tripping via serde
+//!
+//! This design provides:
+//! - Type-safe job definitions at compile time
+//! - Extensibility without modifying orca
+//! - Natural enum-based pattern matching in dispatchers
+//! - Clean serialization to JSONB for storage
+//!
+//! # PostgreSQL Schema
+//!
+//! When using the `postgres` feature, the schema uses modern PostgreSQL features:
+//! - **UUID v7** for time-ordered IDs (efficient indexing)
+//! - **JSONB** for job payloads (flexible, indexable)
+//! - **SKIP LOCKED** for concurrent dequeue (no contention)
+//! - **Partial indexes** for queue depth queries (efficient)
+//!
+//! See `migrations/001_initial_schema.sql` for the full schema definition.
 
 /// Budget management for workload concurrency limiting.
 ///
