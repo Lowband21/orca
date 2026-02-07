@@ -9,6 +9,10 @@ use crate::job::{DependencyKey, Job, JobHandle, JobId, JobKind, JobPriority};
 use crate::lease::{DequeueRequest, JobLease, LeaseId, LeaseRenewal};
 use crate::queue::{LeaseExpiryScanner, QueueService};
 
+/// PostgreSQL-backed implementation of the queue service.
+///
+/// Provides durable job storage with deduplication, leasing, and
+/// lifecycle management using PostgreSQL as the backend.
 pub struct PostgresQueueService<J: Job> {
     pool: PgPool,
     entity_scope: String,
@@ -16,6 +20,7 @@ pub struct PostgresQueueService<J: Job> {
 }
 
 impl<J: Job> PostgresQueueService<J> {
+    /// Create a new PostgreSQL queue service.
     pub fn new(pool: PgPool, entity_scope: impl Into<String>) -> Self {
         Self {
             pool,
@@ -24,6 +29,7 @@ impl<J: Job> PostgresQueueService<J> {
         }
     }
 
+    /// Get a reference to the connection pool.
     pub fn pool(&self) -> &PgPool {
         &self.pool
     }
@@ -116,6 +122,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                 id: existing_id,
                 priority,
                 dedupe_key: dedupe_key.clone(),
+                accepted: false,
             });
         }
 
@@ -146,6 +153,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                 id: job_id,
                 priority,
                 dedupe_key: dedupe_key.clone(),
+                accepted: true,
             }),
             Err(sqlx::Error::Database(db_err)) => {
                 let code = db_err.code().map(|c| c.to_string());
@@ -193,6 +201,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                             id: JobId(row_id),
                             priority,
                             dedupe_key: dedupe_key.clone(),
+                            accepted: false,
                         });
                     } else {
                         let job_id2 = JobId::new();
@@ -221,6 +230,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                                 id: job_id2,
                                 priority,
                                 dedupe_key: dedupe_key.clone(),
+                                accepted: true,
                             }),
                             Err(sqlx::Error::Database(db_err2))
                                 if db_err2
@@ -251,6 +261,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                                         id: JobId(w_id),
                                         priority,
                                         dedupe_key: dedupe_key.clone(),
+                                        accepted: false,
                                     })
                                 } else {
                                     Err(anyhow::anyhow!(
@@ -336,6 +347,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                     id: JobId(existing_id),
                     priority,
                     dedupe_key: dedupe_key.clone(),
+                    accepted: false,
                 });
                 continue;
             }
@@ -368,6 +380,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                         id: job_id,
                         priority,
                         dedupe_key: dedupe_key.clone(),
+                        accepted: true,
                     });
                 }
                 Err(sqlx::Error::Database(db_err)) => {
@@ -415,6 +428,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                                 id: JobId(row_id),
                                 priority,
                                 dedupe_key: dedupe_key.clone(),
+                                accepted: false,
                             });
                         } else {
                             drop(tx.rollback().await);
@@ -460,8 +474,11 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
             created_at: DateTime<Utc>,
         }
 
-        let row: Option<SelectedRow> = if let Some(_selector) = request.selector
+        let row: Option<SelectedRow> = if let Some(selector) = request.selector
         {
+            let entity_id_str = selector.entity_id.to_string();
+            let priority_val = Self::priority_to_i16(selector.priority);
+
             sqlx::query(
                 r#"
                 WITH next AS (
@@ -470,6 +487,8 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                     WHERE state = 'ready'
                       AND entity_scope = $1
                       AND job_kind = $2
+                      AND entity_id = $3
+                      AND priority = $4
                       AND available_at <= NOW()
                     ORDER BY available_at, attempts, created_at
                     FOR UPDATE SKIP LOCKED
@@ -483,6 +502,8 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
             )
             .bind(&self.entity_scope)
             .bind(&kind_str)
+            .bind(&entity_id_str)
+            .bind(priority_val)
             .fetch_optional(&mut *tx)
             .await?
             .map(|row| SelectedRow {
@@ -542,6 +563,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                 lease_id=$2,
                 lease_expires_at=$3,
                 attempts = COALESCE(attempts, 0),
+                renewals = 0,
                 updated_at=NOW()
             WHERE id = $4
               AND entity_scope = $5
@@ -565,6 +587,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
         let job: J = serde_json::from_value(row.payload)?;
 
         let lease = JobLease {
+            job_id: JobId(row.id),
             lease_id,
             job,
             worker_id: request.worker_id,
@@ -612,7 +635,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
 
         let row = sqlx::query(
             r#"
-            SELECT id, attempts, entity_id, payload
+            SELECT id, attempts, entity_id, payload, max_attempts
             FROM orca_jobs
             WHERE lease_id = $1
               AND entity_scope = $2
@@ -631,7 +654,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
         };
 
         let attempts_before: i32 = row.try_get("attempts")?;
-        let max_attempts: i32 = 3;
+        let max_attempts: i32 = row.try_get("max_attempts")?;
         let attempt_next = attempts_before.saturating_add(1) as u16;
 
         if retryable && attempts_before < max_attempts {
@@ -718,7 +741,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
                 lease_owner=NULL,
                 lease_id=NULL,
                 lease_expires_at=NULL,
-                last_error=$2,
+                last_error=$3,
                 updated_at=NOW()
             WHERE lease_id = $1
               AND entity_scope = $2
@@ -746,7 +769,8 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
         let row = sqlx::query(
             r#"
             UPDATE orca_jobs
-            SET lease_expires_at = lease_expires_at + ($1::bigint) * INTERVAL '1 millisecond'
+            SET lease_expires_at = lease_expires_at + ($1::bigint) * INTERVAL '1 millisecond',
+                renewals = COALESCE(renewals, 0) + 1
             WHERE lease_id = $2
               AND entity_scope = $3
               AND state = 'leased'
@@ -754,7 +778,8 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
             RETURNING
                 id, entity_id, job_kind, payload, priority, attempts, available_at,
                 dedupe_key, dependency_key, created_at, updated_at,
-                lease_owner, lease_expires_at
+                lease_owner, lease_expires_at,
+                renewals
             "#,
         )
         .bind(extend_ms)
@@ -774,13 +799,16 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
         let job: J = serde_json::from_value(row.try_get("payload")?)?;
 
         let expires_at: DateTime<Utc> = row.try_get("lease_expires_at")?;
+        let renewals: i32 = row.try_get("renewals")?;
 
+        let job_id_val: Uuid = row.try_get("id")?;
         let lease = JobLease {
+            job_id: JobId(job_id_val),
             lease_id: renewal.lease_id,
             job,
             worker_id: row.try_get("lease_owner").unwrap_or_default(),
             expires_at,
-            renewals: 1,
+            renewals: renewals as u32,
         };
 
         debug!(
@@ -865,7 +893,7 @@ impl<J: Job + 'static> LeaseExpiryScanner for PostgresQueueService<J> {
     async fn scan_expired_leases(&self) -> anyhow::Result<u64> {
         let expired = sqlx::query(
             r#"
-            SELECT id, attempts, entity_id, payload
+            SELECT id, attempts, entity_id, payload, max_attempts
             FROM orca_jobs
             WHERE entity_scope = $1
               AND state = 'leased'
@@ -878,10 +906,10 @@ impl<J: Job + 'static> LeaseExpiryScanner for PostgresQueueService<J> {
         .await?;
 
         let mut resurrected = 0u64;
-        let max_attempts: i32 = 3;
 
         for row in expired {
             let attempts_before: i32 = row.try_get("attempts")?;
+            let max_attempts: i32 = row.try_get("max_attempts")?;
 
             if attempts_before < max_attempts {
                 let attempt_next = attempts_before.saturating_add(1) as u16;

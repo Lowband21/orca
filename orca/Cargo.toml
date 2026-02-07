@@ -1,0 +1,84 @@
+[package]
+name = "orca"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "README.md"
+description = "Generic job orchestration crate for ForensicsIQ and Ferrex"
+keywords = ["job-queue", "orchestration", "async", "workload-scheduler"]
+categories = ["asynchronous", "data-structures"]
+
+[features]
+default = []
+postgres = ["sqlx"]
+metrics = ["prometheus"]
+
+[dependencies]
+# Async runtime and traits
+tokio.workspace = true
+tokio-util.workspace = true
+async-trait.workspace = true
+futures.workspace = true
+futures-util.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+uuid.workspace = true
+
+# Time handling
+chrono.workspace = true
+
+# Error handling
+thiserror.workspace = true
+anyhow.workspace = true
+
+# Concurrent data structures
+dashmap.workspace = true
+
+# Async broadcast for events
+tokio-stream.workspace = true
+
+# Optional: Database
+sqlx = { workspace = true, optional = true }
+
+# Optional: Metrics
+prometheus = { version = "0.13", optional = true }
+
+# Logging
+tracing.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+mockall.workspace = true
+orca-testkit = { path = "../orca-testkit" }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+
+# Orca enforces strict quality standards — all common warnings are denied.
+# NOTE: Cannot use workspace = true with local overrides, so lints are fully
+# specified here rather than inheriting from the workspace.
+
+[lints.rust]
+missing_docs = "deny"
+missing_debug_implementations = "deny"
+unreachable_pub = "deny"
+unused_qualifications = "deny"
+
+[lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+missing_crate_level_docs = "deny"
+private_doc_tests = "deny"
+invalid_codeblock_attributes = "deny"
+invalid_rust_codeblocks = "deny"
+bare_urls = "deny"
+
+[lints.clippy]
+all = "deny"
+pedantic = "warn"
+nursery = "warn"
+cargo = "deny"

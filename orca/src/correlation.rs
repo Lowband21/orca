@@ -4,6 +4,11 @@ use tokio::sync::Mutex;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+/// Unique identifier for correlating related jobs and requests.
+///
+/// Correlation IDs enable distributed tracing by linking jobs that are part
+/// of the same logical operation or request chain. Uses UUID v7 for
+/// time-ordered uniqueness.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct CorrelationId(pub Uuid);
 
@@ -14,10 +19,12 @@ impl Default for CorrelationId {
 }
 
 impl CorrelationId {
+    /// Create a new correlation ID using UUID v7.
     pub fn new() -> Self {
         Self(Uuid::now_v7())
     }
 
+    /// Get the underlying UUID.
     pub fn as_uuid(&self) -> Uuid {
         self.0
     }
@@ -39,6 +46,7 @@ pub struct CorrelationCache {
 }
 
 impl CorrelationCache {
+    /// Create a new empty correlation cache.
     pub fn new() -> Self {
         Self::default()
     }
@@ -105,5 +113,56 @@ impl CorrelationCache {
     pub async fn contains(&self, job_id: Uuid) -> bool {
         let guard = self.inner.lock().await;
         guard.contains_key(&job_id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn test_remember_and_fetch() {
+        let cache = CorrelationCache::new();
+        let job_id = Uuid::new_v4();
+        let corr_id = Uuid::new_v4();
+
+        cache.remember(job_id, corr_id).await;
+        assert_eq!(cache.fetch(job_id).await, Some(corr_id));
+    }
+
+    #[tokio::test]
+    async fn test_remember_if_absent_idempotent() {
+        let cache = CorrelationCache::new();
+        let job_id = Uuid::new_v4();
+        let corr_id1 = Uuid::new_v4();
+        let corr_id2 = Uuid::new_v4();
+
+        cache.remember_if_absent(job_id, corr_id1).await;
+        cache.remember_if_absent(job_id, corr_id2).await;
+
+        assert_eq!(cache.fetch(job_id).await, Some(corr_id1));
+    }
+
+    #[tokio::test]
+    async fn test_take_removes_entry() {
+        let cache = CorrelationCache::new();
+        let job_id = Uuid::new_v4();
+        let corr_id = Uuid::new_v4();
+
+        cache.remember(job_id, corr_id).await;
+        assert_eq!(cache.take(job_id).await, Some(corr_id));
+        assert_eq!(cache.fetch(job_id).await, None);
+    }
+
+    #[tokio::test]
+    async fn test_fetch_or_generate_creates_v7_uuid() {
+        let cache = CorrelationCache::new();
+        let job_id = Uuid::new_v4();
+
+        let corr_id = cache.fetch_or_generate(job_id).await;
+        assert!(cache.contains(job_id).await);
+
+        assert_eq!(corr_id.as_bytes()[6] >> 4, 7);
     }
 }

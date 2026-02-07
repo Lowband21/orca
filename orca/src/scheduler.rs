@@ -31,9 +31,13 @@ impl EntityQueuePolicy {
 /// Weights for priority ring distribution (higher = more slots in ring).
 #[derive(Clone, Copy, Debug)]
 pub struct PriorityWeights {
+    /// Weight for P0 priority jobs.
     pub p0: usize,
+    /// Weight for P1 priority jobs.
     pub p1: usize,
+    /// Weight for P2 priority jobs.
     pub p2: usize,
+    /// Weight for P3 priority jobs.
     pub p3: usize,
 }
 
@@ -95,8 +99,11 @@ impl Default for SchedulerConfig {
 /// attempt leasing work for an (entity, priority) pair.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub struct SchedulingReservation<E: EntityId> {
+    /// Unique reservation identifier.
     pub id: Uuid,
+    /// Entity ID for this reservation.
     pub entity_id: E,
+    /// Priority level for this reservation.
     pub priority: JobPriority,
 }
 
@@ -353,8 +360,11 @@ impl<E: EntityId> fmt::Debug for WeightedFairScheduler<E> {
 /// Bulk ready counts used to prime the scheduler without emitting one event per job.
 #[derive(Clone, Debug)]
 pub struct ReadyCountEntry<E: EntityId> {
+    /// Entity ID that has ready jobs.
     pub entity_id: E,
+    /// Priority level of the ready jobs.
     pub priority: JobPriority,
+    /// Number of ready jobs.
     pub count: usize,
 }
 

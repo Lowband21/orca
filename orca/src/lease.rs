@@ -4,7 +4,7 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::JobPriority;
+use crate::{JobId, JobPriority};
 
 /// Unique identifier for a job lease.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -17,6 +17,7 @@ impl Default for LeaseId {
 }
 
 impl LeaseId {
+    /// Create a new lease ID using UUID v7.
     pub fn new() -> Self {
         Self(Uuid::now_v7())
     }
@@ -31,17 +32,30 @@ impl Display for LeaseId {
 /// Represents a leased job with metadata.
 #[derive(Clone, Debug)]
 pub struct JobLease<J> {
+    /// ID of the leased job.
+    pub job_id: JobId,
+    /// Unique identifier for this lease.
     pub lease_id: LeaseId,
+    /// The job payload.
     pub job: J,
+    /// ID of the worker holding this lease.
     pub worker_id: String,
+    /// Timestamp when the lease expires.
     pub expires_at: DateTime<Utc>,
+    /// Number of times this lease has been renewed.
     pub renewals: u32,
 }
 
 impl<J> JobLease<J> {
     /// Creates a new job lease.
-    pub fn new(job: J, worker_id: String, lease_ttl: Duration) -> Self {
+    pub fn new(
+        job_id: JobId,
+        job: J,
+        worker_id: String,
+        lease_ttl: Duration,
+    ) -> Self {
         Self {
+            job_id,
             lease_id: LeaseId::new(),
             job,
             worker_id,
@@ -68,7 +82,8 @@ impl<J: Serialize> Serialize for JobLease<J> {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("JobLease", 5)?;
+        let mut state = serializer.serialize_struct("JobLease", 6)?;
+        state.serialize_field("job_id", &self.job_id)?;
         state.serialize_field("lease_id", &self.lease_id)?;
         state.serialize_field("job", &self.job)?;
         state.serialize_field("worker_id", &self.worker_id)?;
@@ -85,6 +100,7 @@ impl<'de, J: Deserialize<'de>> Deserialize<'de> for JobLease<J> {
     {
         #[derive(Deserialize)]
         struct JobLeaseFields<J> {
+            job_id: JobId,
             lease_id: LeaseId,
             job: J,
             worker_id: String,
@@ -93,6 +109,7 @@ impl<'de, J: Deserialize<'de>> Deserialize<'de> for JobLease<J> {
         }
         let helper = JobLeaseFields::deserialize(deserializer)?;
         Ok(JobLease {
+            job_id: helper.job_id,
             lease_id: helper.lease_id,
             job: helper.job,
             worker_id: helper.worker_id,
@@ -105,21 +122,28 @@ impl<'de, J: Deserialize<'de>> Deserialize<'de> for JobLease<J> {
 /// Request to extend a lease duration.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LeaseRenewal {
+    /// ID of the lease to renew.
     pub lease_id: LeaseId,
+    /// ID of the worker requesting the renewal.
     pub worker_id: String,
+    /// Duration to extend the lease by.
     pub extend_by: Duration,
 }
 
 /// Request to dequeue a job from the queue.
 #[derive(Clone, Debug)]
-pub struct DequeueRequest<K> {
+pub struct DequeueRequest<K, E = ()> {
+    /// Kind of job to dequeue.
     pub kind: K,
+    /// ID of the worker requesting the dequeue.
     pub worker_id: String,
+    /// Time-to-live for the lease if a job is dequeued.
     pub lease_ttl: Duration,
-    pub selector: Option<QueueSelector<K>>,
+    /// Optional selector for targeted dequeuing.
+    pub selector: Option<QueueSelector<E>>,
 }
 
-impl<K: Serialize> Serialize for DequeueRequest<K> {
+impl<K: Serialize, E: Serialize> Serialize for DequeueRequest<K, E> {
     fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
     where
         S: serde::Serializer,
@@ -134,17 +158,19 @@ impl<K: Serialize> Serialize for DequeueRequest<K> {
     }
 }
 
-impl<'de, K: Deserialize<'de>> Deserialize<'de> for DequeueRequest<K> {
+impl<'de, K: Deserialize<'de>, E: Deserialize<'de>> Deserialize<'de>
+    for DequeueRequest<K, E>
+{
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         #[derive(Deserialize)]
-        struct DequeueRequestFields<K> {
+        struct DequeueRequestFields<K, E> {
             kind: K,
             worker_id: String,
             lease_ttl: Duration,
-            selector: Option<QueueSelector<K>>,
+            selector: Option<QueueSelector<E>>,
         }
         let helper = DequeueRequestFields::deserialize(deserializer)?;
         Ok(DequeueRequest {
@@ -159,7 +185,9 @@ impl<'de, K: Deserialize<'de>> Deserialize<'de> for DequeueRequest<K> {
 /// Selector for queue filtering by entity and priority.
 #[derive(Clone, Copy, Debug)]
 pub struct QueueSelector<E> {
+    /// Entity ID to filter by.
     pub entity_id: E,
+    /// Priority level to filter by.
     pub priority: JobPriority,
 }
 
@@ -197,12 +225,18 @@ impl<'de, E: Deserialize<'de>> Deserialize<'de> for QueueSelector<E> {
 /// Result of job completion processing.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum CompletionOutcome {
+    /// Job completed successfully.
     Completed,
+    /// Job failed and should be retried.
     Retry {
+        /// Whether this retry is retryable or permanent.
         retryable: bool,
+        /// Optional error message.
         error: Option<String>,
     },
+    /// Job failed permanently and should be dead-lettered.
     DeadLetter {
+        /// Optional error message.
         error: Option<String>,
     },
 }
@@ -210,15 +244,24 @@ pub enum CompletionOutcome {
 /// Configuration for lease retry and backoff behavior.
 #[derive(Clone, Debug)]
 pub struct LeaseRetryConfig {
+    /// Maximum number of retry attempts before dead-lettering.
     pub max_attempts: u16,
+    /// Base delay in milliseconds for exponential backoff.
     pub base_delay_ms: u64,
+    /// Maximum backoff delay in milliseconds.
     pub max_backoff_ms: u64,
+    /// Ratio of jitter to add to delays (0.0 - 1.0).
     pub jitter_ratio: f32,
+    /// Minimum jitter in milliseconds.
     pub jitter_min_ms: u64,
+    /// Number of attempts that use fast retry factor.
     pub fast_retry_attempts: u16,
+    /// Multiplier for fast retries (< 1.0 for faster retries).
     pub fast_retry_factor: f32,
-    pub heavy_library_attempt_threshold: u16,
-    pub heavy_library_slowdown_factor: f32,
+    /// Threshold of attempts before considering entity as heavy.
+    pub heavy_entity_attempt_threshold: u16,
+    /// Slowdown factor for entities with many attempts.
+    pub heavy_entity_slowdown_factor: f32,
 }
 
 impl Default for LeaseRetryConfig {
@@ -231,8 +274,8 @@ impl Default for LeaseRetryConfig {
             jitter_min_ms: 500,
             fast_retry_attempts: 2,
             fast_retry_factor: 0.1,
-            heavy_library_attempt_threshold: 10,
-            heavy_library_slowdown_factor: 2.0,
+            heavy_entity_attempt_threshold: 10,
+            heavy_entity_slowdown_factor: 2.0,
         }
     }
 }
@@ -272,7 +315,10 @@ pub fn should_dead_letter(attempts: u16, max_attempts: u16) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ResurrectionOutcome {
     /// Job resurrected with delayed availability.
-    Resurrected { delay_ms: u64 },
+    Resurrected {
+        /// Delay in milliseconds before the job becomes available.
+        delay_ms: u64,
+    },
     /// Job moved to dead-letter queue.
     DeadLettered,
 }
@@ -300,24 +346,6 @@ pub fn process_expired_lease(
             delay_ms: delay.num_milliseconds() as u64,
         }
     }
-}
-
-/// Scanner trait for lease expiry operations.
-///
-/// Implementors handle the actual persistence and queue operations
-/// while this trait provides the orchestration contract.
-pub trait LeaseExpiryScanner {
-    /// Scans for expired leases and processes them.
-    ///
-    /// For each expired lease:
-    /// - If within retry limits: Resurrect with exponential backoff
-    /// - If max attempts exceeded: Move to dead-letter queue
-    ///
-    /// Returns the number of jobs successfully resurrected.
-    fn scan_expired_leases(
-        &self,
-        config: &LeaseRetryConfig,
-    ) -> impl std::future::Future<Output = anyhow::Result<u64>> + Send;
 }
 
 #[cfg(test)]

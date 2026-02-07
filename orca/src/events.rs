@@ -11,14 +11,20 @@ use crate::queue::QueueService;
 /// Metadata envelope attached to every job event.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EventMeta<E> {
+    /// Event schema version (currently 1).
     pub version: u16,
+    /// Correlation ID for request tracing.
     pub correlation_id: Uuid,
+    /// Idempotency key to prevent duplicate processing.
     pub idempotency_key: String,
+    /// Entity identifier for the job this event relates to.
     pub entity_id: E,
+    /// Timestamp when the event was created.
     pub timestamp: DateTime<Utc>,
 }
 
 impl<E> EventMeta<E> {
+    /// Create a new event metadata envelope.
     pub fn new(
         entity_id: E,
         correlation_id: Option<Uuid>,
@@ -37,7 +43,9 @@ impl<E> EventMeta<E> {
 /// Generic job event with metadata and payload.
 #[derive(Clone, Debug)]
 pub struct JobEvent<J: Job> {
+    /// Event metadata including correlation and timestamps.
     pub meta: EventMeta<J::EntityId>,
+    /// The event payload describing the lifecycle transition.
     pub payload: JobEventPayload<J>,
 }
 
@@ -47,51 +55,80 @@ pub struct JobEvent<J: Job> {
 pub enum JobEventPayload<J: Job> {
     /// Job was enqueued to the queue.
     Enqueued {
+        /// ID of the enqueued job.
         job_id: JobId,
+        /// Kind of the enqueued job.
         kind: J::Kind,
+        /// Priority of the enqueued job.
         priority: JobPriority,
     },
     /// Job was merged with an existing job (deduplication).
     Merged {
+        /// ID of the existing job that was updated.
         existing_job_id: JobId,
+        /// ID of the job that was merged (discarded).
         merged_job_id: JobId,
+        /// Kind of the merged job.
         kind: J::Kind,
+        /// Priority of the merged job.
         priority: JobPriority,
     },
     /// Job was dequeued and assigned a lease.
     Dequeued {
+        /// ID of the dequeued job.
         job_id: JobId,
+        /// Kind of the dequeued job.
         kind: J::Kind,
+        /// Priority of the dequeued job.
         priority: JobPriority,
+        /// Lease ID assigned to this job execution.
         lease_id: LeaseId,
     },
     /// Job completed successfully.
     Completed {
+        /// ID of the completed job.
         job_id: JobId,
+        /// Kind of the completed job.
         kind: J::Kind,
+        /// Priority of the completed job.
         priority: JobPriority,
     },
     /// Job failed (may be retryable).
     Failed {
+        /// ID of the failed job.
         job_id: JobId,
+        /// Kind of the failed job.
         kind: J::Kind,
+        /// Priority of the failed job.
         priority: JobPriority,
+        /// Whether this failure is retryable.
         retryable: bool,
     },
     /// Job was moved to dead letter queue after exhausting retries.
     DeadLettered {
+        /// ID of the dead-lettered job.
         job_id: JobId,
+        /// Kind of the dead-lettered job.
         kind: J::Kind,
+        /// Priority of the dead-lettered job.
         priority: JobPriority,
     },
     /// Job lease was renewed.
     LeaseRenewed {
+        /// ID of the job whose lease was renewed.
         job_id: JobId,
+        /// ID of the renewed lease.
         lease_id: LeaseId,
+        /// Total number of renewals for this lease.
         renewals: u32,
     },
     /// Job lease expired without renewal.
-    LeaseExpired { job_id: JobId, lease_id: LeaseId },
+    LeaseExpired {
+        /// ID of the job whose lease expired.
+        job_id: JobId,
+        /// ID of the expired lease.
+        lease_id: LeaseId,
+    },
 }
 
 /// Generic event publisher trait for publishing events of type `E`.
@@ -330,6 +367,7 @@ impl<J: Job> InProcEventBus<J> {
 
 /// Trait for subscribing to job lifecycle events.
 pub trait JobEventStream<J: Job>: Send + Sync {
+    /// Subscribe to job events.
     fn subscribe_jobs(&self) -> broadcast::Receiver<JobEvent<J>>;
 }
 
@@ -341,6 +379,7 @@ impl<J: Job> JobEventStream<J> for InProcEventBus<J> {
 
 /// Trait for subscribing to domain events.
 pub trait DomainEventStream<J: Job>: Send + Sync {
+    /// Subscribe to domain events.
     fn subscribe_domain(&self) -> broadcast::Receiver<J::DomainEvent>;
 }
 
@@ -381,6 +420,11 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+    struct TestWorkloadKind;
+
+    impl crate::WorkloadKind for TestWorkloadKind {}
+
     #[derive(
         Clone, Copy, Debug, Eq, PartialEq, Hash, Serialize, Deserialize,
     )]
@@ -409,6 +453,7 @@ mod tests {
         type EntityId = TestEntityId;
         type Kind = TestJobKind;
         type DomainEvent = TestDomainEvent;
+        type WorkloadKind = TestWorkloadKind;
 
         fn entity_id(&self) -> Self::EntityId {
             self.id.clone()
