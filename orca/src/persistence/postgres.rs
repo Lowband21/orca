@@ -13,6 +13,7 @@ use crate::queue::{LeaseExpiryScanner, QueueService};
 ///
 /// Provides durable job storage with deduplication, leasing, and
 /// lifecycle management using PostgreSQL as the backend.
+#[derive(Debug)]
 pub struct PostgresQueueService<J: Job> {
     pool: PgPool,
     entity_scope: String,

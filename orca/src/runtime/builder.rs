@@ -4,14 +4,13 @@ use std::sync::Arc;
 
 use crate::budget::Budget;
 use crate::correlation::CorrelationCache;
-use crate::events::EventPublisher;
 use crate::job::Job;
 use crate::queue::{LeaseExpiryScanner, QueueService};
 use crate::scheduler::WeightedFairScheduler;
 
 use super::supervisor::{
-    DispatchStatus, JobDispatcher, JobEventPublisher, OrchestratorRuntime,
-    OrchestratorRuntimeConfig, Scheduler, WorkloadToKindMapper,
+    JobDispatcher, JobEventPublisher, OrchestratorRuntime, OrchestratorRuntimeConfig, Scheduler,
+    WorkloadToKindMapper,
 };
 
 /// Builder for constructing an `OrchestratorRuntime` with explicit dependencies.
@@ -53,8 +52,7 @@ where
     workload_mapper: Option<Arc<M>>,
 }
 
-impl<J, Q, B, S, D, M> fmt::Debug
-    for OrchestratorRuntimeBuilder<J, Q, B, S, D, M>
+impl<J, Q, B, S, D, M> fmt::Debug for OrchestratorRuntimeBuilder<J, Q, B, S, D, M>
 where
     J: Job,
     Q: QueueService<J> + LeaseExpiryScanner + 'static,
@@ -142,10 +140,7 @@ where
     }
 
     /// Set the event publisher.
-    pub fn with_events(
-        mut self,
-        events: Arc<dyn JobEventPublisher<J> + 'static>,
-    ) -> Self {
+    pub fn with_events(mut self, events: Arc<dyn JobEventPublisher<J> + 'static>) -> Self {
         self.events = Some(events);
         self
     }
@@ -167,9 +162,7 @@ where
     /// # Errors
     ///
     /// Returns an error if any required dependency is missing.
-    pub fn build(
-        self,
-    ) -> anyhow::Result<OrchestratorRuntime<J, Q, B, S, D, M>> {
+    pub fn build(self) -> anyhow::Result<OrchestratorRuntime<J, Q, B, S, D, M>> {
         let queue = self
             .queue
             .ok_or_else(|| anyhow::anyhow!("queue dependency missing"))?;
@@ -186,9 +179,9 @@ where
             .events
             .ok_or_else(|| anyhow::anyhow!("events dependency missing"))?;
         let correlations = self.correlations.unwrap_or_default();
-        let workload_mapper = self.workload_mapper.ok_or_else(|| {
-            anyhow::anyhow!("workload_mapper dependency missing")
-        })?;
+        let workload_mapper = self
+            .workload_mapper
+            .ok_or_else(|| anyhow::anyhow!("workload_mapper dependency missing"))?;
 
         Ok(OrchestratorRuntime::new(
             self.config,
@@ -224,8 +217,7 @@ where
     workload_mapper: Option<Arc<M>>,
 }
 
-impl<J, Q, B, D, M> fmt::Debug
-    for StandardOrchestratorRuntimeBuilder<J, Q, B, D, M>
+impl<J, Q, B, D, M> fmt::Debug for StandardOrchestratorRuntimeBuilder<J, Q, B, D, M>
 where
     J: Job,
     Q: QueueService<J> + LeaseExpiryScanner + 'static,
@@ -286,10 +278,7 @@ where
     }
 
     /// Set the event publisher.
-    pub fn with_events(
-        mut self,
-        events: Arc<dyn JobEventPublisher<J> + 'static>,
-    ) -> Self {
+    pub fn with_events(mut self, events: Arc<dyn JobEventPublisher<J> + 'static>) -> Self {
         self.events = Some(events);
         self
     }
@@ -312,9 +301,8 @@ where
     /// configured with the priority weights from the runtime config.
     pub fn build(
         self,
-    ) -> anyhow::Result<
-        OrchestratorRuntime<J, Q, B, WeightedFairScheduler<J::EntityId>, D, M>,
-    > {
+    ) -> anyhow::Result<OrchestratorRuntime<J, Q, B, WeightedFairScheduler<J::EntityId>, D, M>>
+    {
         let queue = self
             .queue
             .ok_or_else(|| anyhow::anyhow!("queue dependency missing"))?;
@@ -328,9 +316,9 @@ where
             .events
             .ok_or_else(|| anyhow::anyhow!("events dependency missing"))?;
         let correlations = self.correlations.unwrap_or_default();
-        let workload_mapper = self.workload_mapper.ok_or_else(|| {
-            anyhow::anyhow!("workload_mapper dependency missing")
-        })?;
+        let workload_mapper = self
+            .workload_mapper
+            .ok_or_else(|| anyhow::anyhow!("workload_mapper dependency missing"))?;
 
         let scheduler = Arc::new(WeightedFairScheduler::new(
             &self.config.scheduler,

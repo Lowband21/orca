@@ -111,12 +111,21 @@ pub static JOB_DURATION_SECONDS: LazyLock<HistogramVec> = LazyLock::new(|| {
 pub fn init_metrics() -> anyhow::Result<()> {
     let registry = &*REGISTRY;
 
-    registry.register(Box::new(JOBS_ENQUEUED_TOTAL.clone()))?;
-    registry.register(Box::new(JOBS_COMPLETED_TOTAL.clone()))?;
-    registry.register(Box::new(LEASE_EXPIRED_TOTAL.clone()))?;
-    registry.register(Box::new(QUEUE_DEPTH.clone()))?;
-    registry.register(Box::new(BUDGET_UTILIZATION.clone()))?;
-    registry.register(Box::new(JOB_DURATION_SECONDS.clone()))?;
+    for metric in [
+        Box::new(JOBS_ENQUEUED_TOTAL.clone()) as Box<dyn prometheus::core::Collector>,
+        Box::new(JOBS_COMPLETED_TOTAL.clone()),
+        Box::new(LEASE_EXPIRED_TOTAL.clone()),
+        Box::new(QUEUE_DEPTH.clone()),
+        Box::new(BUDGET_UTILIZATION.clone()),
+        Box::new(JOB_DURATION_SECONDS.clone()),
+    ] {
+        if let Err(e) = registry.register(metric) {
+            let msg = e.to_string();
+            if !msg.contains("Duplicate metrics collector registration attempted") {
+                return Err(e.into());
+            }
+        }
+    }
 
     Ok(())
 }
@@ -217,7 +226,8 @@ mod tests {
 
     #[test]
     fn test_gather_metrics() {
-        // Record some metrics first
+        init_metrics().expect("metrics initialization should succeed");
+
         record_job_enqueued("test_entity", "test_kind");
         record_job_completed("test_entity", "test_kind", "success");
 

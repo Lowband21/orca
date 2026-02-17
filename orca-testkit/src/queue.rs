@@ -122,7 +122,7 @@ impl QueueService<TestJob> for InMemoryQueueService {
 
                 let job_entry = jobs.get_mut(&job_id).unwrap();
                 job_entry.state = JobState::Leased;
-                job_entry.lease_owner = Some(request.worker_id.clone());
+                job_entry.lease_owner = Some(lease_id.to_string());
                 job_entry.lease_expires_at = Some(now + request.lease_ttl);
                 job_entry.lease_renewals = 0;
 

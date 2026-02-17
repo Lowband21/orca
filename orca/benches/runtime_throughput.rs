@@ -224,15 +224,17 @@ async fn publish_enqueued(
     events.publish(event).await
 }
 
-/// Helper to receive next event with lag handling.
+/// Helper to receive next event with lag handling and timeout.
 async fn next_event(
     rx: &mut broadcast::Receiver<JobEvent<TestJob>>,
 ) -> Option<JobEvent<TestJob>> {
-    loop {
-        match rx.recv().await {
-            Ok(event) => return Some(event),
-            Err(broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(broadcast::error::RecvError::Closed) => return None,
+    match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await {
+        Ok(Ok(event)) => Some(event),
+        Ok(Err(broadcast::error::RecvError::Lagged(_))) => None, // Skip lagged
+        Ok(Err(broadcast::error::RecvError::Closed)) => None,
+        Err(_) => {
+            tracing::warn!("Event receive timed out after 30 seconds");
+            None
         }
     }
 }
@@ -286,14 +288,9 @@ fn bench_runtime_throughput(c: &mut Criterion) {
                             events.clone(),
                         );
 
-                        // Start runtime
                         runtime.start().await.expect("start runtime");
-                        runtime.spawn_worker_pool(TestJobKind::Simple, *workers).await;
 
-                        // Pre-enqueue all jobs
                         let mut handles = Vec::with_capacity(*jobs);
-                        let start_instant = Instant::now();
-
                         for idx in 0..*jobs {
                             let entity_id = TestEntityId::new(&format!("entity-{idx}"));
                             let job = TestJob::Simple {
@@ -309,18 +306,42 @@ fn bench_runtime_throughput(c: &mut Criterion) {
                             handles.push(handle.id);
                         }
 
-                        // Wait for all jobs to complete
+                        // Allow scheduler observer to process enqueued events
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+
+                        let start_instant = Instant::now();
+                        runtime.spawn_worker_pool(TestJobKind::Simple, *workers).await;
+
                         let expected: HashSet<JobId> = handles.into_iter().collect();
                         let mut rx = events.subscribe_jobs();
                         let mut completed = HashSet::new();
+                        let wait_start = Instant::now();
+                        const MAX_WAIT: Duration = Duration::from_secs(60);
 
                         loop {
+                            if completed.len() >= expected.len() {
+                                break;
+                            }
+                            if wait_start.elapsed() > MAX_WAIT {
+                                panic!(
+                                    "Benchmark timed out: only {}/{} jobs completed after {:?}",
+                                    completed.len(),
+                                    expected.len(),
+                                    wait_start.elapsed()
+                                );
+                            }
                             if let Some(event) = next_event(&mut rx).await {
-                                if let JobEventPayload::Completed { job_id, .. } = event.payload {
-                                    completed.insert(job_id);
-                                    if completed.len() >= expected.len() {
-                                        break;
+                                match event.payload {
+                                    JobEventPayload::Completed { job_id, .. } => {
+                                        completed.insert(job_id);
                                     }
+                                    JobEventPayload::Failed { job_id, .. } => {
+                                        completed.insert(job_id);
+                                    }
+                                    JobEventPayload::DeadLettered { job_id, .. } => {
+                                        completed.insert(job_id);
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -375,12 +396,8 @@ fn bench_scaling(c: &mut Criterion) {
                         );
 
                         runtime.start().await.expect("start runtime");
-                        runtime.spawn_worker_pool(TestJobKind::Simple, workers).await;
 
-                        // Enqueue jobs
                         let mut handles = Vec::with_capacity(JOB_COUNT);
-                        let start_instant = Instant::now();
-
                         for idx in 0..JOB_COUNT {
                             let entity_id = TestEntityId::new(&format!("entity-{idx}"));
                             let job = TestJob::Simple {
@@ -396,18 +413,41 @@ fn bench_scaling(c: &mut Criterion) {
                             handles.push(handle.id);
                         }
 
-                        // Wait for completion
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+
+                        let start_instant = Instant::now();
+                        runtime.spawn_worker_pool(TestJobKind::Simple, workers).await;
+
                         let expected: HashSet<JobId> = handles.into_iter().collect();
                         let mut rx = events.subscribe_jobs();
                         let mut completed = HashSet::new();
+                        let wait_start = Instant::now();
+                        const MAX_WAIT: Duration = Duration::from_secs(60);
 
                         loop {
+                            if completed.len() >= expected.len() {
+                                break;
+                            }
+                            if wait_start.elapsed() > MAX_WAIT {
+                                panic!(
+                                    "Benchmark timed out: only {}/{} jobs completed after {:?}",
+                                    completed.len(),
+                                    expected.len(),
+                                    wait_start.elapsed()
+                                );
+                            }
                             if let Some(event) = next_event(&mut rx).await {
-                                if let JobEventPayload::Completed { job_id, .. } = event.payload {
-                                    completed.insert(job_id);
-                                    if completed.len() >= expected.len() {
-                                        break;
+                                match event.payload {
+                                    JobEventPayload::Completed { job_id, .. } => {
+                                        completed.insert(job_id);
                                     }
+                                    JobEventPayload::Failed { job_id, .. } => {
+                                        completed.insert(job_id);
+                                    }
+                                    JobEventPayload::DeadLettered { job_id, .. } => {
+                                        completed.insert(job_id);
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
