@@ -149,10 +149,10 @@ CREATE TABLE orca_jobs (
     backoff_until timestamptz,
     
     -- Number of execution attempts made
-    attempts smallint NOT NULL DEFAULT 0,
+    attempts integer NOT NULL DEFAULT 0,
     
     -- Maximum number of attempts before dead-letter
-    max_attempts smallint NOT NULL DEFAULT 3,
+    max_attempts integer NOT NULL DEFAULT 3,
     
     -- Error message from last failed attempt
     -- NULL when never failed or after success

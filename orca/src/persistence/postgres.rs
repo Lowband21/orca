@@ -656,7 +656,7 @@ impl<J: Job + 'static> QueueService<J> for PostgresQueueService<J> {
 
         let attempts_before: i32 = row.try_get("attempts")?;
         let max_attempts: i32 = row.try_get("max_attempts")?;
-        let attempt_next = attempts_before.saturating_add(1) as u16;
+        let attempt_next = attempts_before.saturating_add(1) as u32;
 
         if retryable && attempts_before < max_attempts {
             let base_delay_ms = 1000u64;
@@ -913,7 +913,7 @@ impl<J: Job + 'static> LeaseExpiryScanner for PostgresQueueService<J> {
             let max_attempts: i32 = row.try_get("max_attempts")?;
 
             if attempts_before < max_attempts {
-                let attempt_next = attempts_before.saturating_add(1) as u16;
+                let attempt_next = attempts_before.saturating_add(1) as u32;
 
                 let base_delay_ms = 1000u64;
                 let delay_ms = base_delay_ms

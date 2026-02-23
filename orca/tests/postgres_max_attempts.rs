@@ -17,8 +17,8 @@ use uuid::Uuid;
 async fn insert_leased_job(
     pool: &PgPool,
     entity_scope: &str,
-    attempts: i16,
-    max_attempts: i16,
+    attempts: i32,
+    max_attempts: i32,
     lease_id: Uuid,
 ) -> Uuid {
     let job_id = Uuid::new_v4();
